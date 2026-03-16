@@ -221,5 +221,5 @@ export const MOCK_CUSTOMER_DETAIL = {
 };
 
 export function isMockMode(): boolean {
-  return process.env.USE_MOCK_DATA === 'true';
+  return process.env.USE_MOCK_DATA === 'true' || !process.env.DATABASE_URL;
 }
