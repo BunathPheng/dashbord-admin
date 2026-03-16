@@ -27,7 +27,7 @@ export default function CategoriesPage() {
   async function loadCategories() {
     setIsLoading(true);
     try {
-      const response = await fetch('/api/categories/all');
+      const response = await fetch('/api/categories');
       if (!response.ok) throw new Error('Failed to load categories');
       const data = await response.json();
       setCategories(data);
