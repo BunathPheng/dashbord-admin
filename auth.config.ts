@@ -1,8 +1,13 @@
 import type { NextAuthConfig } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 
+// Auth.js reads AUTH_SECRET from env directly - set fallback before any auth code runs
+if (!process.env.AUTH_SECRET) {
+  process.env.AUTH_SECRET = 'fallback-secret-change-in-production';
+}
+
 export const authConfig: NextAuthConfig = {
-  secret: process.env.AUTH_SECRET || (process.env.USE_MOCK_DATA === 'true' || !process.env.DATABASE_URL ? 'fallback-secret-change-in-production' : undefined),
+  secret: process.env.AUTH_SECRET,
   pages: {
     signIn: '/login',
   },
