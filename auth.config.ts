@@ -2,7 +2,7 @@ import type { NextAuthConfig } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 
 export const authConfig: NextAuthConfig = {
-  secret: process.env.AUTH_SECRET || (process.env.USE_MOCK_DATA === 'true' ? 'mock-secret-for-dev-only' : undefined),
+  secret: process.env.AUTH_SECRET || (process.env.USE_MOCK_DATA === 'true' || !process.env.DATABASE_URL ? 'fallback-secret-change-in-production' : undefined),
   pages: {
     signIn: '/login',
   },
