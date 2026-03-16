@@ -1,7 +1,8 @@
 import { Pool } from 'pg';
 
-const useMockData = process.env.USE_MOCK_DATA === 'true';
 const connectionString = process.env.DATABASE_URL;
+// Default to mock mode when no database is configured (e.g. Vercel deploy without DATABASE_URL)
+const useMockData = process.env.USE_MOCK_DATA === 'true' || !connectionString;
 
 if (!useMockData && !connectionString) {
   throw new Error(
