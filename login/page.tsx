@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { toast } from 'sonner';
+import { toast } from '@/hooks/use-toast';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('admin@admin.com');
@@ -26,7 +26,7 @@ export default function LoginPage() {
       });
 
       if (result?.error) {
-        toast.error('Invalid credentials');
+        toast({ title: 'Invalid credentials', variant: 'destructive' });
         return;
       }
 
@@ -35,7 +35,7 @@ export default function LoginPage() {
       }
     } catch (error) {
       console.error('[Login] Error:', error);
-      toast.error('An error occurred. Please try again.');
+      toast({ title: 'An error occurred. Please try again.', variant: 'destructive' });
     } finally {
       setIsLoading(false);
     }
