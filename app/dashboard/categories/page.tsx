@@ -5,6 +5,16 @@ import { Plus, Edit2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { CategoryDialog } from '@/components/categories/category-dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 
 interface Category {
@@ -18,6 +28,7 @@ export default function CategoriesPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -43,8 +54,6 @@ export default function CategoriesPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Are you sure you want to delete this category?')) return;
-
     try {
       const response = await fetch(`/api/categories/${id}`, { method: 'DELETE' });
       if (!response.ok) throw new Error('Failed to delete category');
@@ -115,7 +124,7 @@ export default function CategoriesPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => handleDelete(category.id)}
+                      onClick={() => setDeleteTargetId(category.id)}
                       className="text-red-600 hover:text-red-700 flex-1"
                     >
                       <Trash2 className="w-4 h-4 mr-1" />
@@ -138,6 +147,31 @@ export default function CategoriesPage() {
           setDialogOpen(false);
         }}
       />
+
+      <AlertDialog open={!!deleteTargetId} onOpenChange={(open) => !open && setDeleteTargetId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete category</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this category? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700"
+              onClick={async () => {
+                if (deleteTargetId) {
+                  await handleDelete(deleteTargetId);
+                  setDeleteTargetId(null);
+                }
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

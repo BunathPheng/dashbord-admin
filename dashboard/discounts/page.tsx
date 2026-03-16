@@ -6,6 +6,16 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { DiscountDialog } from '@/components/discounts/discount-dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 
 interface Discount {
@@ -28,6 +38,7 @@ export default function DiscountsPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedDiscount, setSelectedDiscount] = useState<Discount | null>(null);
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -60,8 +71,6 @@ export default function DiscountsPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Are you sure you want to delete this discount?')) return;
-
     try {
       const response = await fetch(`/api/discounts/${id}`, { method: 'DELETE' });
       if (!response.ok) throw new Error('Failed to delete discount');
@@ -185,7 +194,7 @@ export default function DiscountsPage() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => handleDelete(discount.id)}
+                            onClick={() => setDeleteTargetId(discount.id)}
                             className="text-red-600 hover:text-red-700"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -234,6 +243,31 @@ export default function DiscountsPage() {
           setDialogOpen(false);
         }}
       />
+
+      <AlertDialog open={!!deleteTargetId} onOpenChange={(open) => !open && setDeleteTargetId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete discount</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this discount? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700"
+              onClick={async () => {
+                if (deleteTargetId) {
+                  await handleDelete(deleteTargetId);
+                  setDeleteTargetId(null);
+                }
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
