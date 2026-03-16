@@ -1,5 +1,9 @@
 import type { NextAuthConfig } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
+import { isMockMode } from '@/lib/mock-data';
+import { verifyAdminCredentials } from '@/lib/auth';
+
+const MOCK_ADMIN = { email: 'admin@admin.com', password: 'admin123' };
 
 // Auth.js reads AUTH_SECRET from env directly - set fallback before any auth code runs
 if (!process.env.AUTH_SECRET) {
@@ -31,24 +35,27 @@ export const authConfig: NextAuthConfig = {
         }
 
         try {
-          // NEXTAUTH_URL is required for fetch - use VERCEL_URL on Vercel, localhost for dev
-          const baseUrl =
-            process.env.NEXTAUTH_URL ||
-            (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
-          const response = await fetch(`${baseUrl}/api/auth/verify`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              email: credentials.email,
-              password: credentials.password,
-            }),
-          });
-
-          if (!response.ok) {
+          if (isMockMode()) {
+            if (
+              credentials.email === MOCK_ADMIN.email &&
+              credentials.password === MOCK_ADMIN.password
+            ) {
+              return {
+                id: 'mock-admin-1',
+                email: MOCK_ADMIN.email,
+                name: 'Admin User',
+                role: 'admin',
+              };
+            }
             return null;
           }
 
-          const admin = await response.json();
+          const admin = await verifyAdminCredentials(
+            String(credentials.email),
+            String(credentials.password)
+          );
+          if (!admin) return null;
+
           return {
             id: admin.id,
             email: admin.email,
