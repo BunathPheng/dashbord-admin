@@ -3,8 +3,6 @@ import { StatsCards } from '@/components/dashboard/stats-cards';
 import { RecentOrders } from '@/components/dashboard/recent-orders';
 import { LowStockAlert } from '@/components/dashboard/low-stock-alert';
 
-export const dynamic = 'force-dynamic';
-
 export default async function DashboardPage() {
   const [stats, recentOrders, lowStockProducts] = await Promise.all([
     getDashboardStats(),
