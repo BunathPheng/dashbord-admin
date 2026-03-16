@@ -31,8 +31,11 @@ export const authConfig: NextAuthConfig = {
         }
 
         try {
-          // Use fetch to call our API endpoint instead of importing bcrypt here
-          const response = await fetch(`${process.env.NEXTAUTH_URL}/api/auth/verify`, {
+          // NEXTAUTH_URL is required for fetch - use VERCEL_URL on Vercel, localhost for dev
+          const baseUrl =
+            process.env.NEXTAUTH_URL ||
+            (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+          const response = await fetch(`${baseUrl}/api/auth/verify`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
