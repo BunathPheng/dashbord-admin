@@ -1,15 +1,12 @@
 'use client';
 
-import { DollarSign, ShoppingCart, Users, Package, AlertTriangle } from 'lucide-react';
+import { DollarSign, ShoppingCart } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface StatsCardsProps {
   stats: {
     totalRevenue: number;
     totalOrders: number;
-    totalCustomers: number;
-    totalProducts: number;
-    lowStockProducts: number;
   };
 }
 
@@ -29,31 +26,10 @@ export function StatsCards({ stats }: StatsCardsProps) {
       color: 'text-[#f95672]',
       bgColor: 'bg-[#f95672]/10',
     },
-    {
-      title: 'Total Customers',
-      value: stats.totalCustomers.toString(),
-      icon: Users,
-      color: 'text-[#f95672]',
-      bgColor: 'bg-[#f95672]/10',
-    },
-    {
-      title: 'Active Products',
-      value: stats.totalProducts.toString(),
-      icon: Package,
-      color: 'text-[#f95672]',
-      bgColor: 'bg-[#f95672]/10',
-    },
-    {
-      title: 'Low Stock Items',
-      value: stats.lowStockProducts.toString(),
-      icon: AlertTriangle,
-      color: 'text-[#f95672]',
-      bgColor: 'bg-[#f95672]/10',
-    },
   ];
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       {cards.map((card) => {
         const Icon = card.icon;
         return (

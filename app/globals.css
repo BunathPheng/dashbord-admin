@@ -19,7 +19,7 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.99 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: #f95672;
@@ -122,4 +122,21 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Ensure destructive toast text is visible on red background */
+.group.destructive > div:first-child {
+  color: white !important;
+}
+.group.destructive > div:first-child * {
+  color: inherit !important;
+}
+
+/* Hide scrollbar while keeping scroll functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
 }

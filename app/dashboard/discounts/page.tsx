@@ -1,68 +1,54 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2 } from 'lucide-react';
+import { ImageIcon, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { DiscountDialog } from '@/components/discounts/discount-dialog';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+import { getImagePreviewProxyUrl } from '@/lib/api-client';
 import { useToast } from '@/hooks/use-toast';
 
-interface Discount {
+interface Product {
   id: string;
-  code: string;
-  description: string;
-  discount_type: 'percentage' | 'fixed';
-  discount_value: number;
-  max_uses: number | null;
-  current_uses: number;
-  is_active: boolean;
-  start_date: string | null;
-  end_date: string | null;
+  name: string;
+  price: number;
+  category_name: string;
+  imageUrl?: string;
+  discountPercentage?: number;
+  onPromotion?: boolean;
 }
 
 export default function DiscountsPage() {
-  const [discounts, setDiscounts] = useState<Discount[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedDiscount, setSelectedDiscount] = useState<Discount | null>(null);
-  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [editPercent, setEditPercent] = useState<Record<string, string>>({});
   const { toast } = useToast();
 
   useEffect(() => {
-    loadDiscounts();
+    loadProducts();
   }, [page]);
 
-  async function loadDiscounts() {
+  async function loadProducts() {
     setIsLoading(true);
     try {
       const params = new URLSearchParams({
         page: page.toString(),
-        limit: '10',
+        limit: '20',
       });
-
-      const response = await fetch(`/api/discounts?${params}`);
-      if (!response.ok) throw new Error('Failed to load discounts');
+      const response = await fetch(`/api/products?${params}`);
+      if (!response.ok) throw new Error('Failed to load products');
 
       const data = await response.json();
-      setDiscounts(data.discounts);
-      setTotal(data.total);
+      setProducts(data.products || []);
+      setTotal(data.total || 0);
     } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to load discounts',
+        description: 'Failed to load products',
         variant: 'destructive',
       });
     } finally {
@@ -70,58 +56,63 @@ export default function DiscountsPage() {
     }
   }
 
-  async function handleDelete(id: string) {
+  async function handleUpdateDiscount(product: Product) {
+    const raw = editPercent[product.id] ?? String(product.discountPercentage ?? 0);
+    const percentage = Math.min(100, Math.max(0, parseFloat(raw) || 0));
+    setUpdatingId(product.id);
     try {
-      const response = await fetch(`/api/discounts/${id}`, { method: 'DELETE' });
-      if (!response.ok) throw new Error('Failed to delete discount');
+      const response = await fetch(`/api/products/${product.id}/discount`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ percentage }),
+        credentials: 'include',
+      });
+      const errData = await response.json().catch(() => ({}));
+      const errMsg = (errData as { error?: string })?.error;
+      if (!response.ok) throw new Error(errMsg || `Failed to update (${response.status})`);
 
       toast({
         title: 'Success',
-        description: 'Discount deleted successfully',
+        description: `Discount set to ${percentage}%`,
       });
-      loadDiscounts();
+      setEditPercent((prev) => {
+        const next = { ...prev };
+        delete next[product.id];
+        return next;
+      });
+      loadProducts();
     } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to delete discount',
+        description: error instanceof Error ? error.message : 'Failed to update discount',
         variant: 'destructive',
       });
+    } finally {
+      setUpdatingId(null);
     }
   }
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Discounts & Promotions</h1>
-          <p className="text-gray-600 mt-1">Manage discount codes and promotional offers</p>
-        </div>
-        <Button
-          onClick={() => {
-            setSelectedDiscount(null);
-            setDialogOpen(true);
-          }}
-          className="gap-2"
-        >
-          <Plus className="w-4 h-4" />
-          Add Discount
-        </Button>
+    <div className="p-6 md:p-8 space-y-8 max-w-[1600px] mx-auto">
+      <div>
+        <h1 className="text-3xl font-bold text-gray-900">Product Discounts</h1>
+        <p className="text-gray-600 mt-1">Set discount percentage for products</p>
       </div>
 
       <Card className="border-0 shadow-sm">
         <CardHeader>
-          <h2 className="text-lg font-semibold">All Discounts</h2>
+          <h2 className="text-lg font-semibold">Products</h2>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="border-b border-gray-200">
                 <tr className="text-sm font-medium text-gray-600">
-                  <th className="text-left py-3 px-4">Code</th>
-                  <th className="text-left py-3 px-4">Description</th>
-                  <th className="text-left py-3 px-4">Type</th>
-                  <th className="text-left py-3 px-4">Value</th>
-                  <th className="text-center py-3 px-4">Usage</th>
+                  <th className="text-left py-3 px-4 w-16">Image</th>
+                  <th className="text-left py-3 px-4">Name</th>
+                  <th className="text-left py-3 px-4">Category</th>
+                  <th className="text-left py-3 px-4">Price</th>
+                  <th className="text-left py-3 px-4">Discount %</th>
                   <th className="text-left py-3 px-4">Status</th>
                   <th className="text-center py-3 px-4">Actions</th>
                 </tr>
@@ -133,85 +124,93 @@ export default function DiscountsPage() {
                       Loading...
                     </td>
                   </tr>
-                ) : discounts.length === 0 ? (
+                ) : products.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="py-8 text-center text-gray-600">
-                      No discounts found
+                      No products found
                     </td>
                   </tr>
                 ) : (
-                  discounts.map((discount) => (
-                    <tr
-                      key={discount.id}
-                      className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
-                    >
-                      <td className="py-3 px-4 font-mono font-semibold text-[#f95672]">{discount.code}</td>
-                      <td className="py-3 px-4 text-sm text-gray-600">{discount.description}</td>
-                      <td className="py-3 px-4 text-sm">
-                        <Badge variant="outline">
-                          {discount.discount_type === 'percentage' ? '%' : '$'}
-                        </Badge>
-                      </td>
-                      <td className="py-3 px-4 font-medium">
-                        {discount.discount_type === 'percentage' ? (
-                          <span>{discount.discount_value}% off</span>
-                        ) : (
-                          <span>${discount.discount_value.toFixed(2)} off</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-center text-sm">
-                        {discount.max_uses ? (
-                          <span className="text-gray-600">
-                            {discount.current_uses} / {discount.max_uses}
-                          </span>
-                        ) : (
-                          <span className="text-gray-500">Unlimited</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4">
-                        <Badge
-                          className={
-                            discount.is_active
-                              ? 'bg-green-100 text-green-800'
-                              : 'bg-gray-100 text-gray-800'
-                          }
-                        >
-                          {discount.is_active ? 'Active' : 'Inactive'}
-                        </Badge>
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex justify-center gap-2">
+                  products.map((product) => {
+                    const imgSrc = getImagePreviewProxyUrl(product.imageUrl) || product.imageUrl;
+                    const percent = product.discountPercentage ?? 0;
+                    const display = editPercent[product.id] ?? String(percent);
+                    const isUpdating = updatingId === product.id;
+
+                    return (
+                      <tr
+                        key={product.id}
+                        className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
+                      >
+                        <td className="py-3 px-4">
+                          <div className="w-12 h-12 rounded-lg overflow-hidden bg-gray-100 flex items-center justify-center shrink-0">
+                            {imgSrc ? (
+                              <img
+                                src={imgSrc}
+                                alt={product.name}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <ImageIcon className="w-6 h-6 text-gray-400" />
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 font-medium text-gray-900">{product.name}</td>
+                        <td className="py-3 px-4 text-sm">{product.category_name || '-'}</td>
+                        <td className="py-3 px-4 font-medium">${product.price.toFixed(2)}</td>
+                        <td className="py-3 px-4 align-middle">
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="number"
+                              min={0}
+                              max={100}
+                              step={1}
+                              value={display}
+                              onChange={(e) =>
+                                setEditPercent((prev) => ({ ...prev, [product.id]: e.target.value }))
+                              }
+                              className="w-14 h-8 text-sm"
+                            />
+                            <span className="text-sm text-gray-500">%</span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          {(product.onPromotion || (product.discountPercentage ?? 0) > 0) ? (
+                            <Badge className="bg-green-100 text-green-800">On Promotion</Badge>
+                          ) : (
+                            <span className="text-gray-500 text-sm">—</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-center align-middle">
                           <Button
-                            variant="ghost"
+                            variant="outline"
                             size="sm"
-                            onClick={() => {
-                              setSelectedDiscount(discount);
-                              setDialogOpen(true);
-                            }}
+                            onClick={() => handleUpdateDiscount(product)}
+                            disabled={isUpdating}
+                            className="gap-1"
                           >
-                            <Edit2 className="w-4 h-4" />
+                            {isUpdating ? (
+                              <span className="animate-pulse">...</span>
+                            ) : (
+                              <>
+                                <Check className="w-3.5 h-3.5" />
+                                Apply
+                              </>
+                            )}
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setDeleteTargetId(discount.id)}
-                            className="text-red-600 hover:text-red-700"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
           </div>
 
-          {!isLoading && discounts.length > 0 && (
-            <div className="flex justify-between items-center mt-6 pt-4 border-t border-gray-200">
+          {!isLoading && products.length > 0 && (
+            <div className="flex justify-between items-center mt-6 pt-6 border-t border-gray-200">
               <p className="text-sm text-gray-600">
-                Showing {(page - 1) * 10 + 1}-{Math.min(page * 10, total)} of {total} discounts
+                Showing {(page - 1) * 20 + 1}-{Math.min(page * 20, total)} of {total} products
               </p>
               <div className="flex gap-2">
                 <Button
@@ -224,7 +223,7 @@ export default function DiscountsPage() {
                 <Button
                   variant="outline"
                   onClick={() => setPage(page + 1)}
-                  disabled={page * 10 >= total}
+                  disabled={page * 20 >= total}
                 >
                   Next
                 </Button>
@@ -233,41 +232,6 @@ export default function DiscountsPage() {
           )}
         </CardContent>
       </Card>
-
-      <DiscountDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        discount={selectedDiscount}
-        onSuccess={() => {
-          loadDiscounts();
-          setDialogOpen(false);
-        }}
-      />
-
-      <AlertDialog open={!!deleteTargetId} onOpenChange={(open) => !open && setDeleteTargetId(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete discount</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete this discount? This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-red-600 hover:bg-red-700"
-              onClick={async () => {
-                if (deleteTargetId) {
-                  await handleDelete(deleteTargetId);
-                  setDeleteTargetId(null);
-                }
-              }}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

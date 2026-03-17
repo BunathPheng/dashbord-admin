@@ -1,15 +1,14 @@
-import { getDashboardStats, getRecentOrders, getLowStockProducts } from '@/lib/queries';
+import { getDashboardStats, getRecentOrders } from '@/lib/queries';
 import { StatsCards } from '@/components/dashboard/stats-cards';
 import { RecentOrders } from '@/components/dashboard/recent-orders';
-import { LowStockAlert } from '@/components/dashboard/low-stock-alert';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export default async function DashboardPage() {
-  const [stats, recentOrders, lowStockProducts] = await Promise.all([
+  const [stats, recentOrders] = await Promise.all([
     getDashboardStats(),
     getRecentOrders(5),
-    getLowStockProducts(5),
   ]);
 
   return (
@@ -21,11 +20,8 @@ export default async function DashboardPage() {
 
       <StatsCards stats={stats} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2">
-          <RecentOrders orders={recentOrders} />
-        </div>
-        <LowStockAlert products={lowStockProducts} />
+      <div className="grid grid-cols-1 lg:grid-cols-1 gap-8">
+        <RecentOrders orders={recentOrders} />
       </div>
     </div>
   );

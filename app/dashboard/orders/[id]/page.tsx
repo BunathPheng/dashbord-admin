@@ -7,18 +7,13 @@ import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { getImagePreviewProxyUrl } from '@/lib/api-client';
+import { ImageIcon } from 'lucide-react';
 
 interface OrderDetail {
   order: {
-    id: string;
+    id?: string;
     order_number: string;
     first_name: string;
     last_name: string;
@@ -37,6 +32,7 @@ interface OrderDetail {
   items: Array<{
     id: string;
     product_name: string;
+    product_imageUrl?: string;
     quantity: number;
     unit_price: number;
     total_price: number;
@@ -45,10 +41,7 @@ interface OrderDetail {
 
 const statusColors: Record<string, string> = {
   pending: 'bg-yellow-100 text-yellow-800',
-  processing: 'bg-blue-100 text-blue-800',
-  shipped: 'bg-purple-100 text-purple-800',
-  delivered: 'bg-green-100 text-green-800',
-  cancelled: 'bg-red-100 text-red-800',
+  paid: 'bg-green-100 text-green-800',
 };
 
 export default function OrderDetailPage() {
@@ -56,9 +49,7 @@ export default function OrderDetailPage() {
   const router = useRouter();
   const { toast } = useToast();
   const [data, setData] = useState<OrderDetail | null>(null);
-  const [newStatus, setNewStatus] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
-  const [isUpdating, setIsUpdating] = useState(false);
 
   useEffect(() => {
     loadOrder();
@@ -70,8 +61,10 @@ export default function OrderDetailPage() {
       const response = await fetch(`/api/orders/${params.id}`);
       if (!response.ok) throw new Error('Failed to load order');
       const result = await response.json();
+      if (!result?.order) {
+        throw new Error('Invalid order data');
+      }
       setData(result);
-      setNewStatus(result.order.status);
     } catch (error) {
       toast({
         title: 'Error',
@@ -84,35 +77,6 @@ export default function OrderDetailPage() {
     }
   }
 
-  async function handleStatusUpdate() {
-    if (!data || newStatus === data.order.status) return;
-
-    setIsUpdating(true);
-    try {
-      const response = await fetch(`/api/orders/${params.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
-      });
-
-      if (!response.ok) throw new Error('Failed to update order');
-
-      toast({
-        title: 'Success',
-        description: 'Order status updated successfully',
-      });
-      loadOrder();
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to update order status',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsUpdating(false);
-    }
-  }
-
   if (isLoading) {
     return (
       <div className="p-8">
@@ -121,7 +85,7 @@ export default function OrderDetailPage() {
     );
   }
 
-  if (!data) {
+  if (!data || !data.order) {
     return (
       <div className="p-8">
         <div className="text-center text-gray-600">Order not found</div>
@@ -129,7 +93,7 @@ export default function OrderDetailPage() {
     );
   }
 
-  const { order, items } = data;
+  const { order, items = [] } = data;
 
   return (
     <div className="p-8 space-y-6">
@@ -140,8 +104,8 @@ export default function OrderDetailPage() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">{order.order_number}</h1>
-          <p className="text-gray-600">Placed on {new Date(order.created_at).toLocaleDateString()}</p>
+          <h1 className="text-3xl font-bold text-gray-900">{order.order_number ?? `ORD-${order.id}`}</h1>
+          <p className="text-gray-600">Placed on {new Date(order.created_at ?? '').toLocaleDateString()}</p>
         </div>
       </div>
 
@@ -161,10 +125,12 @@ export default function OrderDetailPage() {
                 <p className="text-sm text-gray-600">Email</p>
                 <p className="font-medium">{order.email}</p>
               </div>
-              <div>
-                <p className="text-sm text-gray-600">Shipping Address</p>
-                <p className="font-medium">{order.shipping_address}</p>
-              </div>
+              {order.shipping_address && (
+                <div>
+                  <p className="text-sm text-gray-600">Shipping Address</p>
+                  <p className="font-medium">{order.shipping_address}</p>
+                </div>
+              )}
               {order.notes && (
                 <div>
                   <p className="text-sm text-gray-600">Notes</p>
@@ -184,6 +150,7 @@ export default function OrderDetailPage() {
                 <table className="w-full">
                   <thead className="border-b border-gray-200">
                     <tr className="text-sm font-medium text-gray-600">
+                      <th className="text-left py-3 px-4 w-16">Image</th>
                       <th className="text-left py-3 px-4">Product</th>
                       <th className="text-right py-3 px-4">Quantity</th>
                       <th className="text-right py-3 px-4">Unit Price</th>
@@ -191,14 +158,26 @@ export default function OrderDetailPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((item) => (
-                      <tr key={item.id} className="border-b border-gray-100">
-                        <td className="py-3 px-4">{item.product_name}</td>
-                        <td className="text-right py-3 px-4">{item.quantity}</td>
-                        <td className="text-right py-3 px-4">${item.unit_price.toFixed(2)}</td>
-                        <td className="text-right py-3 px-4 font-medium">${item.total_price.toFixed(2)}</td>
-                      </tr>
-                    ))}
+                    {items.map((item) => {
+                      const imgSrc = getImagePreviewProxyUrl(item.product_imageUrl) || item.product_imageUrl;
+                      return (
+                        <tr key={item.id} className="border-b border-gray-100">
+                          <td className="py-3 px-4">
+                            <div className="w-12 h-12 rounded-lg overflow-hidden bg-gray-100 flex items-center justify-center shrink-0">
+                              {imgSrc ? (
+                                <img src={imgSrc} alt={item.product_name} className="w-full h-full object-cover" />
+                              ) : (
+                                <ImageIcon className="w-6 h-6 text-gray-400" />
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 font-medium">{item.product_name}</td>
+                          <td className="text-right py-3 px-4">{item.quantity}</td>
+                          <td className="text-right py-3 px-4">${item.unit_price.toFixed(2)}</td>
+                          <td className="text-right py-3 px-4 font-medium">${item.total_price.toFixed(2)}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -212,29 +191,14 @@ export default function OrderDetailPage() {
             <CardHeader>
               <CardTitle>Order Status</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <p className="text-sm text-gray-600 mb-2">Status</p>
-                <Select value={newStatus} onValueChange={setNewStatus}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="pending">Pending</SelectItem>
-                    <SelectItem value="processing">Processing</SelectItem>
-                    <SelectItem value="shipped">Shipped</SelectItem>
-                    <SelectItem value="delivered">Delivered</SelectItem>
-                    <SelectItem value="cancelled">Cancelled</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button
-                onClick={handleStatusUpdate}
-                disabled={newStatus === order.status || isUpdating}
-                className="w-full"
-              >
-                {isUpdating ? 'Updating...' : 'Update Status'}
-              </Button>
+            <CardContent>
+              <p className="text-sm text-gray-600 mb-2">Status</p>
+              <Badge className={statusColors[order.status] || 'bg-gray-100 text-gray-800'}>
+                {order.status === 'paid' ? 'Paid' : 'Pending'}
+              </Badge>
+              <p className="text-xs text-gray-500 mt-2">
+                Status updates automatically when payment is completed.
+              </p>
             </CardContent>
           </Card>
 
@@ -245,24 +209,24 @@ export default function OrderDetailPage() {
             <CardContent className="space-y-3">
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Subtotal</span>
-                <span className="font-medium">${order.subtotal.toFixed(2)}</span>
+                <span className="font-medium">${(order.subtotal ?? order.total_amount ?? 0).toFixed(2)}</span>
               </div>
-              {order.tax > 0 && (
+              {(order.tax ?? 0) > 0 && (
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-600">Tax</span>
                   <span className="font-medium">${order.tax.toFixed(2)}</span>
                 </div>
               )}
-              {order.shipping_cost > 0 && (
+              {(order.shipping_cost ?? 0) > 0 && (
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-600">Shipping</span>
-                  <span className="font-medium">${order.shipping_cost.toFixed(2)}</span>
+                  <span className="font-medium">${(order.shipping_cost ?? 0).toFixed(2)}</span>
                 </div>
               )}
-              {order.discount_amount > 0 && (
+              {(order.discount_amount ?? 0) > 0 && (
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-600">Discount</span>
-                  <span className="font-medium text-green-600">-${order.discount_amount.toFixed(2)}</span>
+                  <span className="font-medium text-green-600">-${(order.discount_amount ?? 0).toFixed(2)}</span>
                 </div>
               )}
               <div className="border-t border-gray-200 pt-3 flex justify-between">

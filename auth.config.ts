@@ -1,9 +1,7 @@
 import type { NextAuthConfig } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
-import { isMockMode } from '@/lib/mock-data';
 import { verifyAdminCredentials } from '@/lib/auth';
-
-const MOCK_ADMIN = { email: 'admin@admin.com', password: 'admin123' };
+import { isRealApiMode, loginWithBackend } from '@/lib/api-client';
 
 // Auth.js reads AUTH_SECRET from env directly - set fallback before any auth code runs
 if (!process.env.AUTH_SECRET) {
@@ -26,6 +24,18 @@ export const authConfig: NextAuthConfig = {
 
       return isLoggedIn;
     },
+    async jwt({ token, user }) {
+      if (user && 'accessToken' in user) {
+        token.accessToken = user.accessToken as string;
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      if (session.user) {
+        (session as { accessToken?: string }).accessToken = token.accessToken as string;
+      }
+      return session;
+    },
   },
   providers: [
     Credentials({
@@ -35,21 +45,23 @@ export const authConfig: NextAuthConfig = {
         }
 
         try {
-          if (isMockMode()) {
-            if (
-              credentials.email === MOCK_ADMIN.email &&
-              credentials.password === MOCK_ADMIN.password
-            ) {
-              return {
-                id: 'mock-admin-1',
-                email: MOCK_ADMIN.email,
-                name: 'Admin User',
-                role: 'admin',
-              };
-            }
-            return null;
+          // Real API mode: authenticate against backend (API_URL)
+          if (isRealApiMode()) {
+            const result = await loginWithBackend(
+              String(credentials.email),
+              String(credentials.password)
+            );
+            if (!result) return null;
+            return {
+              id: result.id,
+              email: result.email,
+              name: result.name,
+              role: result.role,
+              accessToken: result.accessToken,
+            };
           }
 
+          // Database mode: use admins table (DATABASE_URL)
           const admin = await verifyAdminCredentials(
             String(credentials.email),
             String(credentials.password)

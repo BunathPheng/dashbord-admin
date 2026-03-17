@@ -16,26 +16,54 @@ export default function LoginPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setIsLoading(true);
 
+    if (!email?.trim()) {
+      toast({ title: 'Validation', description: 'Please enter your email.', variant: 'destructive' });
+      return;
+    }
+    if (!password?.trim()) {
+      toast({ title: 'Validation', description: 'Please enter your password.', variant: 'destructive' });
+      return;
+    }
+
+    setIsLoading(true);
     try {
+      // Validate credentials first to get backend error message on failure
+      const verifyRes = await fetch('/api/auth/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (!verifyRes.ok) {
+        const errData = await verifyRes.json().catch(() => ({}));
+        const errorMessage = errData.error || 'Invalid password or email';
+        toast({ title: 'Login failed', description: errorMessage, variant: 'destructive' });
+        return;
+      }
+
+      // Credentials valid - sign in to create session
       const result = await signIn('credentials', {
         email,
         password,
         redirect: false,
       });
 
-      if (result?.error) {
-        toast({ title: 'Invalid credentials', variant: 'destructive' });
+      if (result?.ok) {
+        router.push('/dashboard');
         return;
       }
 
-      if (result?.ok) {
-        router.push('/dashboard');
-      }
-    } catch (error) {
-      console.error('[Login] Error:', error);
-      toast({ title: 'An error occurred. Please try again.', variant: 'destructive' });
+      const errorMessage =
+        result?.error === 'CredentialsSignin'
+          ? 'Invalid password or email'
+          : result?.error
+            ? String(result.error)
+            : 'Invalid password or email';
+      toast({ title: 'Login failed', description: errorMessage, variant: 'destructive' });
+    } catch (err) {
+      console.error('[Login] Error:', err);
+      toast({ title: 'Login failed', description: 'An error occurred. Please try again.', variant: 'destructive' });
     } finally {
       setIsLoading(false);
     }
@@ -80,7 +108,7 @@ export default function LoginPage() {
               {isLoading ? 'Signing in...' : 'Sign in'}
             </Button>
             <p className="text-xs text-muted-foreground text-center">
-              Demo credentials: admin@admin.com / admin123
+              Sign in with your admin account credentials
             </p>
           </form>
         </CardContent>

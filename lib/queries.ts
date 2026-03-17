@@ -1,3 +1,4 @@
+import { auth } from '@/auth';
 import { query } from './db';
 import {
   isMockMode,
@@ -6,6 +7,7 @@ import {
   MOCK_RECENT_ORDERS,
   MOCK_LOW_STOCK_PRODUCTS,
 } from './mock-data';
+import { isRealApiMode, fetchDashboardFromBackend, fetchBackend } from './api-client';
 
 export interface DashboardStats {
   totalRevenue: number;
@@ -22,6 +24,20 @@ export interface SalesData {
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
+  // Prefer API when configured (API_URL), so dashboard matches backend data
+  if (isRealApiMode()) {
+    const session = await auth();
+    const token = (session as { accessToken?: string })?.accessToken;
+    const apiStats = await fetchDashboardFromBackend(token);
+    return {
+      totalRevenue: apiStats?.totalRevenue ?? 0,
+      totalOrders: apiStats?.totalOrders ?? 0,
+      totalCustomers: apiStats?.totalCustomers ?? 0,
+      totalProducts: 0,
+      lowStockProducts: 0,
+    };
+  }
+
   if (isMockMode()) return MOCK_STATS;
 
   const results = await Promise.all([
@@ -34,23 +50,20 @@ export async function getDashboardStats(): Promise<DashboardStats> {
       ['cancelled']
     ),
     query<{ count: string }>('SELECT COUNT(*) as count FROM customers'),
-    query<{ count: string }>('SELECT COUNT(*) as count FROM products WHERE is_active = true'),
-    query<{ count: string }>(
-      'SELECT COUNT(*) as count FROM inventory WHERE quantity_available < low_stock_threshold'
-    ),
   ]);
 
   return {
     totalRevenue: parseFloat(results[0].rows[0]?.total || '0'),
     totalOrders: parseInt(results[1].rows[0]?.count || '0'),
     totalCustomers: parseInt(results[2].rows[0]?.count || '0'),
-    totalProducts: parseInt(results[3].rows[0]?.count || '0'),
-    lowStockProducts: parseInt(results[4].rows[0]?.count || '0'),
+    totalProducts: 0,
+    lowStockProducts: 0,
   };
 }
 
 export async function getSalesData(days: number = 30): Promise<SalesData[]> {
   if (isMockMode()) return MOCK_SALES_DATA;
+  if (isRealApiMode()) return []; // Backend may not expose sales chart data
 
   const result = await query<SalesData>(
     `
@@ -76,6 +89,30 @@ export async function getSalesData(days: number = 30): Promise<SalesData[]> {
 
 export async function getRecentOrders(limit: number = 10) {
   if (isMockMode()) return MOCK_RECENT_ORDERS.slice(0, limit);
+  if (isRealApiMode()) {
+    const session = await auth();
+    const token = (session as { accessToken?: string })?.accessToken;
+    const { data, ok } = await fetchBackend<{
+      payload?: Array<Record<string, unknown>>;
+      data?: Array<Record<string, unknown>>;
+    }>('/api/v1/orders', { token });
+    if (!ok) return [];
+    const raw = data?.payload ?? data?.data ?? [];
+    const arr = Array.isArray(raw) ? raw : [];
+    return arr.slice(0, limit).map((o) => {
+      const user = (o?.user ?? {}) as Record<string, unknown>;
+      return {
+        id: String(o?.id ?? ''),
+        order_number: `ORD-${o?.id ?? ''}`,
+        first_name: String(user?.fullName ?? '').split(' ')[0] || '',
+        last_name: String(user?.fullName ?? '').split(' ').slice(1).join(' ') || '',
+        email: String(user?.email ?? ''),
+        total_amount: Number(o?.totalAmount ?? 0),
+        status: String(o?.status ?? 'pending'),
+        created_at: String((o as { createdAt?: string })?.createdAt ?? ''),
+      };
+    });
+  }
 
   const result = await query(
     `
@@ -101,6 +138,7 @@ export async function getRecentOrders(limit: number = 10) {
 
 export async function getLowStockProducts(limit: number = 10) {
   if (isMockMode()) return MOCK_LOW_STOCK_PRODUCTS.slice(0, limit);
+  if (isRealApiMode()) return []; // Backend may not expose inventory
 
   const result = await query(
     `

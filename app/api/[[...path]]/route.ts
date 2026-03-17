@@ -1,7 +1,7 @@
 /**
  * Consolidated API route to stay under Vercel Hobby's 12 serverless function limit.
  * Handles: categories, products, orders, customers, discounts, inventory.
- * Auth routes (auth/[...nextauth], auth/verify) remain separate.
+ * When API_URL is set, proxies to backend at http://localhost:9090 (or configured URL).
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
@@ -34,9 +34,7 @@ import {
   deleteDiscount,
 } from '@/lib/discount-queries';
 import { getInventory, updateInventory } from '@/lib/inventory-queries';
-import { verifyAdminCredentials } from '@/lib/auth';
-
-const MOCK_ADMIN = { email: 'admin@admin.com', password: 'admin123' };
+import { getApiUrl, isRealApiMode, uploadFileToBackend, fetchBackend } from '@/lib/api-client';
 
 type RouteParams = { params: Promise<{ path?: string[] }> };
 
@@ -56,6 +54,33 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   const [resource, sub, id] = path;
 
   try {
+    // Files: GET /api/files/preview/[filename] - proxy to backend for image preview
+    if (resource === 'files' && sub === 'preview' && id) {
+      const baseUrl = getApiUrl();
+      if (!baseUrl) {
+        return NextResponse.json({ error: 'File preview not configured' }, { status: 503 });
+      }
+      const filename = path.slice(2).join('/') || id;
+      const session = await auth();
+      const token = (session as { accessToken?: string })?.accessToken;
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+      }
+      const res = await fetch(`${baseUrl}/api/v1/files/preview-file/${filename}`, {
+        headers,
+        cache: 'no-store',
+      });
+      if (!res.ok) {
+        return new NextResponse(null, { status: res.status });
+      }
+      const blob = await res.blob();
+      const contentType = res.headers.get('content-type') || 'image/png';
+      return new NextResponse(blob, {
+        headers: { 'Content-Type': contentType, 'Cache-Control': 'public, max-age=3600' },
+      });
+    }
+
     // Categories: GET /api/categories or /api/categories/all
     if (resource === 'categories') {
       const data = isMockMode()
@@ -66,13 +91,38 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     // Products: GET /api/products (list) or /api/products/:id
     if (resource === 'products') {
-      if (id) {
+      const productId = sub || id; // path is ['products','1'] so id is in sub
+      if (productId) {
+        if (isRealApiMode()) {
+          const session = await auth();
+          const token = (session as { accessToken?: string })?.accessToken;
+          const { data, ok, status } = await fetchBackend<{ payload?: unknown; data?: unknown }>(
+            `/api/v1/products/${productId}`,
+            { token }
+          );
+          if (!ok) {
+            return NextResponse.json(data || { error: 'Product not found' }, { status: status || 404 });
+          }
+          const p = (data?.payload ?? data?.data ?? data) as Record<string, unknown>;
+          const mapped = {
+            id: String(p?.id ?? productId),
+            name: p?.name ?? '',
+            description: p?.description ?? '',
+            price: p?.price ?? 0,
+            imageUrl: p?.imageUrl ?? p?.image_url ?? '',
+            image_url: p?.imageUrl ?? p?.image_url ?? '',
+            category: p?.category ?? '',
+            category_name: p?.category ?? '',
+            is_active: true,
+          };
+          return NextResponse.json(mapped);
+        }
         if (isMockMode()) {
-          const p = MOCK_PRODUCTS.find((x) => x.id === id);
+          const p = MOCK_PRODUCTS.find((x) => x.id === productId);
           if (!p) return NextResponse.json({ error: 'Product not found' }, { status: 404 });
           return NextResponse.json(p);
         }
-        const product = await getProductById(id);
+        const product = await getProductById(productId);
         if (!product) return NextResponse.json({ error: 'Product not found' }, { status: 404 });
         return NextResponse.json(product);
       }
@@ -80,6 +130,55 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       const page = parseInt(searchParams.get('page') || '1');
       const limit = parseInt(searchParams.get('limit') || '10');
       const search = searchParams.get('search') || undefined;
+      const category = searchParams.get('category') || undefined;
+      const sortPrice = searchParams.get('sortPrice') || undefined;
+      const sortCreatedAt = searchParams.get('sortCreatedAt') || undefined;
+      const newArrivals = searchParams.get('newArrivals') || undefined;
+      const trending = searchParams.get('trending') || undefined;
+
+      if (isRealApiMode()) {
+        const session = await auth();
+        const token = (session as { accessToken?: string })?.accessToken;
+        const q = new URLSearchParams();
+        if (category) q.set('category', category);
+        if (search) q.set('name', search);
+        if (sortPrice) q.set('sortPrice', sortPrice);
+        if (sortCreatedAt) q.set('sortCreatedAt', sortCreatedAt);
+        if (newArrivals) q.set('newArrivals', newArrivals);
+        if (trending) q.set('trending', trending);
+        const qs = q.toString();
+        const { data, ok, status } = await fetchBackend<{
+          success?: boolean;
+          payload?: Array<Record<string, unknown>>;
+          data?: Array<Record<string, unknown>>;
+        }>(`/api/v1/products${qs ? `?${qs}` : ''}`, { token });
+        if (!ok) {
+          return NextResponse.json(data || { error: 'Failed to fetch products' }, { status: status || 502 });
+        }
+        const raw = data?.payload ?? data?.data ?? [];
+        const arr = Array.isArray(raw) ? raw : [];
+        const products = arr.map((p) => ({
+          id: String(p?.id ?? ''),
+          name: p?.name ?? '',
+          category_name: p?.category ?? '',
+          price: Number(p?.price) ?? 0,
+          is_active: true,
+          imageUrl: p?.imageUrl ?? p?.image_url ?? '',
+          description: p?.description ?? '',
+          discountPercentage: Number(p?.discountPercentage ?? p?.discount_percentage ?? 0),
+          onPromotion: Boolean(p?.onPromotion ?? p?.on_promotion ?? (Number(p?.discountPercentage ?? p?.discount_percentage ?? 0) > 0)),
+        }));
+        const total = products.length;
+        const start = (page - 1) * limit;
+        const paginated = products.slice(start, start + limit);
+        return NextResponse.json({
+          products: paginated,
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        });
+      }
       if (isMockMode()) {
         let products = [...MOCK_PRODUCTS];
         if (search) {
@@ -107,13 +206,63 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     // Orders: GET /api/orders (list) or /api/orders/:id
     if (resource === 'orders') {
-      if (id) {
+      const orderId = sub || id; // path is ['orders','1'] so id is in sub
+      if (orderId) {
+        if (isRealApiMode()) {
+          const session = await auth();
+          const token = (session as { accessToken?: string })?.accessToken;
+          const { data, ok, status } = await fetchBackend<{ payload?: unknown; data?: unknown }>(
+            `/api/v1/orders/${orderId}`,
+            { token }
+          );
+          if (!ok) {
+            return NextResponse.json(data || { error: 'Order not found' }, { status: status || 404 });
+          }
+          let raw = data?.payload ?? data?.data ?? data;
+          if (Array.isArray(raw) && raw.length > 0) raw = raw[0];
+          const o = (raw ?? {}) as Record<string, unknown>;
+          if (!o?.id && !o?.user && !o?.product) {
+            return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+          }
+          const user = (o?.user ?? {}) as Record<string, unknown>;
+          const product = (o?.product ?? {}) as Record<string, unknown>;
+          const mapped = {
+            order: {
+              id: String(o?.id ?? orderId),
+              order_number: `ORD-${o?.id ?? orderId}`,
+              first_name: String(user?.fullName ?? '').split(' ')[0] || '',
+              last_name: String(user?.fullName ?? '').split(' ').slice(1).join(' ') || '',
+              email: String(user?.email ?? ''),
+              status: String(o?.status ?? 'pending'),
+              payment_status: 'pending',
+              total_amount: Number(o?.totalAmount ?? 0),
+              subtotal: Number(o?.totalAmount ?? 0),
+              tax: 0,
+              shipping_cost: 0,
+              discount_amount: 0,
+              shipping_address: '',
+              notes: '',
+              created_at: String((o as { createdAt?: string })?.createdAt ?? new Date().toISOString()),
+            },
+            items: [
+              {
+                id: String(product?.id ?? '1'),
+                product_name: String(product?.name ?? ''),
+                product_imageUrl: String(product?.imageUrl ?? product?.image_url ?? ''),
+                quantity: Number(o?.quantity ?? 0),
+                unit_price: Number(product?.price ?? 0),
+                total_price: Number(o?.totalAmount ?? 0),
+              },
+            ],
+          };
+          return NextResponse.json(mapped);
+        }
         if (isMockMode()) {
-          const o = MOCK_ORDERS.find((x) => x.id === id);
+          const o = MOCK_ORDERS.find((x) => x.id === orderId);
           if (!o) return NextResponse.json({ error: 'Order not found' }, { status: 404 });
           return NextResponse.json({ ...MOCK_ORDER_DETAIL, order: { ...MOCK_ORDER_DETAIL.order, ...o } });
         }
-        const data = await getOrderById(id);
+        const data = await getOrderById(orderId);
         if (!data) return NextResponse.json({ error: 'Order not found' }, { status: 404 });
         return NextResponse.json(data);
       }
@@ -121,6 +270,46 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       const page = parseInt(searchParams.get('page') || '1');
       const limit = parseInt(searchParams.get('limit') || '10');
       const status = searchParams.get('status') || undefined;
+      if (isRealApiMode()) {
+        const session = await auth();
+        const token = (session as { accessToken?: string })?.accessToken;
+        const q = new URLSearchParams();
+        if (status) q.set('status', status);
+        const qs = q.toString();
+        const { data, ok, status: resStatus } = await fetchBackend<{
+          payload?: Array<Record<string, unknown>>;
+          data?: Array<Record<string, unknown>>;
+        }>(`/api/v1/orders${qs ? `?${qs}` : ''}`, { token });
+        if (!ok) {
+          return NextResponse.json(data || { error: 'Failed to fetch orders' }, { status: resStatus || 502 });
+        }
+        const raw = data?.payload ?? data?.data ?? [];
+        const arr = Array.isArray(raw) ? raw : [];
+        const orders = arr.map((o) => {
+          const user = (o?.user ?? {}) as Record<string, unknown>;
+          return {
+            id: String(o?.id ?? ''),
+            order_number: `ORD-${o?.id ?? ''}`,
+            first_name: String(user?.fullName ?? '').split(' ')[0] || '',
+            last_name: String(user?.fullName ?? '').split(' ').slice(1).join(' ') || '',
+            email: String(user?.email ?? ''),
+            total_amount: Number(o?.totalAmount ?? 0),
+            status: String(o?.status ?? 'pending'),
+            payment_status: 'pending',
+            created_at: String((o as { createdAt?: string })?.createdAt ?? ''),
+          };
+        });
+        const total = orders.length;
+        const start = (page - 1) * limit;
+        const paginated = orders.slice(start, start + limit);
+        return NextResponse.json({
+          orders: paginated,
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        });
+      }
       if (isMockMode()) {
         let orders = [...MOCK_ORDERS];
         if (status) orders = orders.filter((o) => o.status === status);
@@ -140,18 +329,19 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     // Customers: GET /api/customers (list) or /api/customers/:id
     if (resource === 'customers') {
-      if (id) {
+      const customerId = sub || id; // path is ['customers','1'] so id is in sub
+      if (customerId) {
         if (isMockMode()) {
-          const c = MOCK_CUSTOMERS.find((x) => x.id === id);
+          const c = MOCK_CUSTOMERS.find((x) => x.id === customerId);
           if (!c) return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
           return NextResponse.json({
             customer: { ...MOCK_CUSTOMER_DETAIL.customer, ...c },
-            orders: id === '1' ? MOCK_CUSTOMER_DETAIL.orders : [],
+            orders: customerId === '1' ? MOCK_CUSTOMER_DETAIL.orders : [],
           });
         }
-        const customer = await getCustomerById(id);
+        const customer = await getCustomerById(customerId);
         if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
-        const orders = await getCustomerOrders(id);
+        const orders = await getCustomerOrders(customerId);
         return NextResponse.json({ customer, orders });
       }
       const searchParams = request.nextUrl.searchParams;
@@ -185,13 +375,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     // Discounts: GET /api/discounts (list) or /api/discounts/:id
     if (resource === 'discounts') {
-      if (id) {
+      const discountId = sub || id; // path is ['discounts','1'] so id is in sub
+      if (discountId) {
         if (isMockMode()) {
-          const d = MOCK_DISCOUNTS.find((x) => x.id === id);
+          const d = MOCK_DISCOUNTS.find((x) => x.id === discountId);
           if (!d) return NextResponse.json({ error: 'Discount not found' }, { status: 404 });
           return NextResponse.json(d);
         }
-        const discount = await getDiscountById(id);
+        const discount = await getDiscountById(discountId);
         if (!discount) return NextResponse.json({ error: 'Discount not found' }, { status: 404 });
         return NextResponse.json(discount);
       }
@@ -247,36 +438,28 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   const { path = [] } = await params;
   const [resource, sub] = path;
 
-  // auth/verify - login endpoint, no auth required
-  if (resource === 'auth' && sub === 'verify') {
-    try {
-      const { email, password } = await request.json();
-      if (!email || !password) {
-        return NextResponse.json({ error: 'Missing email or password' }, { status: 400 });
-      }
-      if (isMockMode() && email === MOCK_ADMIN.email && password === MOCK_ADMIN.password) {
-        return NextResponse.json({
-          id: 'mock-admin-1',
-          email: MOCK_ADMIN.email,
-          name: 'Admin User',
-          role: 'admin',
-        });
-      }
-      const admin = await verifyAdminCredentials(email, password);
-      if (!admin) {
-        return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
-      }
-      return NextResponse.json({ id: admin.id, email: admin.email, name: admin.name, role: admin.role });
-    } catch (error) {
-      console.error('[Auth Verify] Error:', error);
-      return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });
-    }
-  }
-
   const authErr = await checkAuth();
   if (authErr) return authErr;
 
   try {
+    if (resource === 'files' && sub === 'upload') {
+      if (!getApiUrl()) {
+        return NextResponse.json({ error: 'File upload requires API_URL to be configured' }, { status: 503 });
+      }
+      const formData = await request.formData();
+      const file = formData.get('file') as File | null;
+      if (!file || !(file instanceof File)) {
+        return NextResponse.json({ error: 'No file provided' }, { status: 400 });
+      }
+      const session = await auth();
+      const token = (session as { accessToken?: string })?.accessToken;
+      const result = await uploadFileToBackend(file, token);
+      if (!result) {
+        return NextResponse.json({ error: 'Upload failed' }, { status: 502 });
+      }
+      return NextResponse.json({ success: true, fileUrl: result.fileUrl }, { status: 201 });
+    }
+
     if (resource === 'categories') {
       const body = await request.json();
       if (isMockMode()) {
@@ -294,22 +477,77 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     if (resource === 'products') {
       const body = await request.json();
+      if (isRealApiMode()) {
+        const session = await auth();
+        const token = (session as { accessToken?: string })?.accessToken;
+        const category = body.category || 'OTHERS';
+        const payload = {
+          name: String(body.name || '').trim(),
+          description: String(body.description || ''),
+          price: parseFloat(body.price) || 0,
+          imageUrl: String(body.imageUrl || body.image_url || ''),
+        };
+        const { data, ok, status } = await fetchBackend<unknown>(
+          `/api/v1/products?category=${encodeURIComponent(category)}`,
+          {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            token,
+          }
+        );
+        if (!ok) {
+          const errMsg = (data as { message?: string; error?: string })?.message ?? (data as { message?: string; error?: string })?.error ?? 'Failed to create product';
+          if (process.env.NODE_ENV === 'development') {
+            console.error('[API] POST /products backend error:', status, data);
+          }
+          return NextResponse.json({ error: errMsg, details: data }, { status: status && status >= 400 ? status : 502 });
+        }
+        const result = (data as { payload?: unknown; data?: unknown })?.payload ?? (data as { payload?: unknown; data?: unknown })?.data ?? data;
+        return NextResponse.json(result, { status: 201 });
+      }
       if (isMockMode()) {
         const mock = {
           id: `mock-${Date.now()}`,
           name: body.name,
           sku: body.sku || `SKU-${Date.now()}`,
-          category_name: body.category_name || 'Uncategorized',
+          category_name: body.category_name || body.category || 'Uncategorized',
           price: body.price || 0,
           is_active: true,
         };
         return NextResponse.json(mock, { status: 201 });
       }
-      const product = await createProduct(body);
+      let categoryId = body.category_id;
+      if (!categoryId && body.category) {
+        const catKey = String(body.category).replace(/\s/g, '_').toUpperCase();
+        const catResult = await query<{ id: string }>(
+          "SELECT id FROM categories WHERE UPPER(REPLACE(name, ' ', '_')) = $1 AND is_active = true LIMIT 1",
+          [catKey]
+        );
+        categoryId = catResult.rows[0]?.id;
+        if (!categoryId) {
+          const firstCat = await query<{ id: string }>('SELECT id FROM categories WHERE is_active = true LIMIT 1');
+          categoryId = firstCat.rows[0]?.id || '';
+        }
+      }
+      const product = await createProduct({
+        name: body.name,
+        description: body.description || '',
+        category_id: categoryId || '',
+        price: body.price ?? 0,
+        cost: body.cost ?? 0,
+        sku: body.sku || `SKU-${Date.now()}`,
+        image_url: body.imageUrl || body.image_url,
+      });
       return NextResponse.json(product, { status: 201 });
     }
 
     if (resource === 'discounts') {
+      if (isRealApiMode()) {
+        return NextResponse.json(
+          { error: 'Product discounts use PATCH /api/products/{id}/discount' },
+          { status: 405 }
+        );
+      }
       const body = await request.json();
       if (isMockMode()) {
         const mock = {
@@ -362,6 +600,28 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     if (resource === 'products' && subOrId) {
       const id = subOrId;
+      if (isRealApiMode()) {
+        const session = await auth();
+        const token = (session as { accessToken?: string })?.accessToken;
+        const category = body.category || 'OTHERS';
+        const { data, ok, status } = await fetchBackend<unknown>(
+          `/api/v1/products/${id}?category=${encodeURIComponent(category)}`,
+          {
+            method: 'PUT',
+            body: JSON.stringify({
+              name: body.name,
+              description: body.description ?? '',
+              price: body.price ?? 0,
+              imageUrl: body.imageUrl || body.image_url || '',
+            }),
+            token,
+          }
+        );
+        if (!ok) {
+          return NextResponse.json(data || { error: 'Failed to update product' }, { status: status || 500 });
+        }
+        return NextResponse.json(data);
+      }
       if (isMockMode()) {
         const p = MOCK_PRODUCTS.find((x) => x.id === id);
         if (!p) return NextResponse.json({ error: 'Product not found' }, { status: 404 });
@@ -373,6 +633,23 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     if (resource === 'orders' && subOrId) {
       const id = subOrId;
+      if (isRealApiMode()) {
+        const session = await auth();
+        const token = (session as { accessToken?: string })?.accessToken;
+        const payload = body.status != null ? { status: body.status } : { productId: body.productId, quantity: body.quantity };
+        const { data, ok, status } = await fetchBackend<unknown>(
+          `/api/v1/orders/${id}`,
+          {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+            token,
+          }
+        );
+        if (!ok) {
+          return NextResponse.json(data || { error: 'Failed to update order' }, { status: status || 500 });
+        }
+        return NextResponse.json(data ?? { success: true });
+      }
       if (isMockMode()) {
         const o = MOCK_ORDERS.find((x) => x.id === id);
         if (!o) return NextResponse.json({ error: 'Order not found' }, { status: 404 });
@@ -434,6 +711,18 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     if (resource === 'products' && id) {
       if (isMockMode()) return NextResponse.json({ success: true });
+      if (isRealApiMode()) {
+        const session = await auth();
+        const token = (session as { accessToken?: string })?.accessToken;
+        const { data, ok, status } = await fetchBackend<unknown>(`/api/v1/products/${id}`, {
+          method: 'DELETE',
+          token,
+        });
+        if (!ok) {
+          return NextResponse.json(data || { error: 'Failed to delete product' }, { status: status || 500 });
+        }
+        return NextResponse.json(data ?? { success: true });
+      }
       await deleteProduct(id);
       return NextResponse.json({ success: true });
     }

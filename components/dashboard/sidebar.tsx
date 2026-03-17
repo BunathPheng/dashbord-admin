@@ -6,9 +6,6 @@ import {
   BarChart3,
   Package,
   ShoppingCart,
-  Users,
-  Tags,
-  Boxes,
   Settings,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -29,21 +26,6 @@ const navigation = [
     name: 'Orders',
     href: '/dashboard/orders',
     icon: ShoppingCart,
-  },
-  {
-    name: 'Customers',
-    href: '/dashboard/customers',
-    icon: Users,
-  },
-  {
-    name: 'Categories',
-    href: '/dashboard/categories',
-    icon: Tags,
-  },
-  {
-    name: 'Inventory',
-    href: '/dashboard/inventory',
-    icon: Boxes,
   },
   {
     name: 'Discounts',

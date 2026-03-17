@@ -30,10 +30,7 @@ interface Order {
 
 const statusColors: Record<string, string> = {
   pending: 'bg-yellow-100 text-yellow-800',
-  processing: 'bg-blue-100 text-blue-800',
-  shipped: 'bg-purple-100 text-purple-800',
-  delivered: 'bg-green-100 text-green-800',
-  cancelled: 'bg-red-100 text-red-800',
+  paid: 'bg-green-100 text-green-800',
 };
 
 export default function OrdersPage() {
@@ -75,7 +72,7 @@ export default function OrdersPage() {
   }
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="p-6 md:p-8 space-y-8 max-w-[1600px] mx-auto">
       <div>
         <h1 className="text-3xl font-bold text-gray-900">Orders</h1>
         <p className="text-gray-600 mt-1">Manage and track customer orders</p>
@@ -96,10 +93,7 @@ export default function OrdersPage() {
                 <SelectContent>
                   <SelectItem value="all">All Statuses</SelectItem>
                   <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="processing">Processing</SelectItem>
-                  <SelectItem value="shipped">Shipped</SelectItem>
-                  <SelectItem value="delivered">Delivered</SelectItem>
-                  <SelectItem value="cancelled">Cancelled</SelectItem>
+                  <SelectItem value="paid">Paid</SelectItem>
                 </SelectContent>
               </Select>
             </div>
